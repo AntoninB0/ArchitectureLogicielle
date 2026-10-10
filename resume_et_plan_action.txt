@@ -1,0 +1,240 @@
+===============================================================================
+ TP ARCHITECTURE DES SYSTÈMES EMBARQUÉS (CY-Tech) - RÉSUMÉ & PLAN
+ Binôme : Antonin & Shawrov - rédigé le 11/10/2026
+ Matériel : 2 × STM32F103C8T6 ("Blue Pill")
+===============================================================================
+
+-------------------------------------------------------------------------------
+1. CE QUI EST PRÉSENT DANS LE DOSSIER
+-------------------------------------------------------------------------------
+- "Architecture des systèmes embarqués - CY-Tech 2025-2026-175-184.pdf"
+    -> sujet du prof (slides 175-184) : "Chaîne d'information sécurisée".
+- "Messagerie ... Rendus.pdf"
+    -> mail du prof (08/10/2026) : modalités et date du rendu.
+- "Messagerie ... Exigences Antonin et Shawrov.pdf"
+    -> NOTRE spec (envoyée au prof le 08/10/2026) : exigences logicielles
+       détaillées. C'EST ELLE QUI FAIT FOI pour le développement.
+- "protocol_icd.h"
+    -> ICD : format de trame (en-tête, payload 16 octets max, CRC16, flags).
+
+-------------------------------------------------------------------------------
+2. RÉSUMÉ DU SUJET (prof)
+-------------------------------------------------------------------------------
+Transmission de proche en proche :
+    PC IN --> [nœud 1 = maître] --> [nœud 2] --> ... --> [nœud N] --> PC OUT
+- Intégrité + confidentialité : chiffré entre les modules, en clair à
+  l'entrée et en sortie.
+- Initialisation avec échange des clés. Impossible d'interchanger deux
+  modules sans réinitialisation.
+- Reset : 3 appuis sur le bouton ou commande RESET.
+- Indication visuelle de l'état : non initialisé / en synchronisation /
+  synchronisé.
+- Commandes prévues par le sujet : MESSAGE, INIT/RESET, GET_INFO, GET_KEY,
+  UPDT_KEY.
+
+Rendu (par mail, avec les noms du binôme) : code sous git (lien, pas
+d'archive) + preuves de fonctionnement (vidéo des LEDs et des messages, logs
+d'exécution, ...) + lien drive si besoin.
+DATE : "dimanche 25 novembre 23h59". ATTENTION : le 25/11/2026 est un
+MERCREDI. Viser le dimanche 22/11 et faire confirmer la date au prof.
+
+-------------------------------------------------------------------------------
+3. RÉSUMÉ DE NOTRE SPEC (Antonin & Shawrov)
+-------------------------------------------------------------------------------
+Machine à états : INIT -> RUNNING (configuration et clé appliquées)
+                  RUNNING -> ERROR (erreur de traitement) -> RUNNING après 1 s
+                  Démarrage et reset -> INIT. Jamais bloqué.
+LED : INIT = clignotement 0,5 Hz | RUNNING = fixe | ERROR = clignotement 5 Hz.
+
+Rôle :
+  - ID 32 bits dérivé de l'UID 96 bits (wafer + position X/Y).
+  - Maître = le nœud qui "reçoit 0x0" (DEFAULT_ID venant du PC), déterminé
+    avant toute émission. Un seul maître. Routines d'init maître et esclave
+    séparées.
+Init :
+  - Le maître génère une clé à chaque init et émet CMD_INIT (configuration +
+    clé). La chaîne est configurée quand il reçoit le CMD_ACK du dernier.
+  - Chaque esclave applique la configuration, stocke la clé, détermine s'il
+    est le dernier, puis relaie CMD_INIT. Le dernier renvoie CMD_ACK.
+Réception : octet par octet sur USART, attente du 0x7E, rejet si length > 16
+  ou flag inconnu, abandon de la trame après un timeout inter-octets.
+Intégrité : CRC16 sur en-tête + payload, trame rejetée si le CRC est faux.
+Relais : l'esclave relaie sans modification les trames valides, ne relaie
+  jamais une trame invalide.
+Chiffrement de bout en bout : le maître chiffre le payload venu du PC, les
+  intermédiaires relaient tel quel, le dernier déchiffre et envoie le message
+  en clair au PC OUT. Aucun CMD_MSG émis hors de l'état RUNNING.
+Bouton : 3 appuis en moins de 1 s -> émet CMD_RESET. Réception de CMD_RESET
+  -> efface la clé et la configuration, relaie, retourne en INIT. Le maître
+  relance l'initialisation.
+Flags utilisés : 0x00 INIT (configuration + clé), 0x01 RESET (sans payload),
+  0x02 ACK (fin d'init), 0x03 MSG (payload chiffré de 1 à 16 octets),
+  0x04 ERROR (payload = 1 octet de code d'erreur). Tout autre flag : rejeté.
+  -> L'ICD protocol_icd.h correspond exactement à notre spec.
+
+-------------------------------------------------------------------------------
+4. POINTS À CORRIGER / PRÉCISER DANS NOTRE SPEC
+-------------------------------------------------------------------------------
+Incohérences internes :
+  P1. "revenir dans l'état ATTENTE" (bouton) : cet état n'existe pas.
+      -> remplacer par INIT.
+  P2. ERROR -> "revenir dans RUNNING après 1 s" : et si l'erreur arrive en
+      INIT ? -> revenir à l'ÉTAT PRÉCÉDENT après 1 s.
+  P3. "Relayer sans modifier en-tête ni payload" contredit "l'esclave
+      détermine à partir de la configuration s'il est le dernier" : sans
+      compteur de saut incrémenté, aucun nœud ne connaît sa position.
+      -> Soit CMD_INIT fait exception (l'esclave incrémente un champ
+         "position" avant de relayer, et recalcule le CRC),
+      -> soit le dernier nœud est détecté par l'absence de réponse en aval.
+      Proposition de payload CMD_INIT :
+         [0..3] clé uint32 | [4] nombre de nœuds | [5] position (incrémentée)
+  P4. "Le nœud recevant 0x0 sera maître" : à reformuler précisément, par
+      exemple : "le nœud qui reçoit sur sa ligne d'entrée une trame dont
+      id_src = DEFAULT_ID (0x0), c'est-à-dire envoyée par le PC, devient
+      maître". Et le nombre de nœuds, qui le connaît ? (paramètre de la
+      commande envoyée par le PC, ou constante de compilation)
+  P5. Le retour du CMD_ACK du dernier vers le maître remonte la chaîne :
+      il faut relayer vers l'AMONT (ligne RX de la sortie vers TX de
+      l'entrée). Ce n'est pas écrit (aucun problème avec seulement 2 nœuds).
+  P6. CRC16 : quel polynôme ? (proposé : CRC-16/CCITT-FALSE, polynôme
+      0x1021, valeur initiale 0xFFFF). Calculé sur les 8 octets d'en-tête +
+      "length" octets de payload, ou sur les 16 octets du payload ?
+  P7. Sur le fil : trame de taille variable (8 + length + 2) ou fixe
+      (26 octets) ? Valeur du timeout inter-octets ? (proposé : 10 ms)
+  P8. Algorithme de chiffrement non défini. Proposé : flot XOR généré par un
+      xorshift32 initialisé avec la clé. Simple, symétrique, testable sur PC.
+  P9. Codes d'erreur de CMD_ERROR non définis. Proposé : 1 = CRC,
+      2 = longueur, 3 = flag inconnu, 4 = timeout, 5 = MSG hors RUNNING.
+      Qui émet l'erreur, et vers qui ?
+  P10. Génération de la clé sans générateur matériel (le F103 n'a pas de
+       RNG) : graine = bruit ADC du capteur de température + SysTick + UID.
+
+Écarts avec le sujet du prof (à justifier dans le README, ou à combler) :
+  S1. GET_INFO, GET_KEY et UPDT_KEY ne sont pas implémentés : notre liste de
+      flags les rejette.
+  S2. Anti-interchangement des modules : non couvert. Piste : à l'init,
+      chaque nœud mémorise l'ID de son voisin et la configuration ; un nœud
+      qui change de place ne reçoit plus le même ID voisin ou la même
+      position -> ERROR jusqu'au prochain reset. (Attention : avec un relais
+      sans modification, id_src est toujours celui du maître.)
+  S3. 3 états visuels dans le sujet (non init / en synchro / synchronisé)
+      contre INIT / RUNNING / ERROR chez nous. Piste : en INIT, clignoter
+      0,5 Hz avant la réception de CMD_INIT, puis plus vite pendant
+      l'attente du ACK.
+  S4. La clé circule en clair dans CMD_INIT (le sujet veut tout chiffré
+      entre modules). À assumer et expliquer comme une limite connue.
+
+-------------------------------------------------------------------------------
+5. ARCHITECTURE HW PROPOSÉE (Blue Pill)
+-------------------------------------------------------------------------------
+Pas de ST-LINK intégré, pas de bouton USER (seulement RESET), une seule LED
+(PC13, active à l'état bas).
+
+  Fonction             | Périph. | Broches         | Remarque
+  ---------------------+---------+-----------------+---------------------------
+  Ligne ENTRÉE (amont) | USART1  | PA9 TX/PA10 RX  | maître : PC IN ; esclave : nœud N-1
+  Ligne SORTIE (aval)  | USART2  | PA2 TX/PA3 RX   | dernier : PC OUT ; sinon : nœud N+1
+  Debug / logs         | USART3  | PB10 TX/PB11 RX | logs = preuves pour le rendu
+  LED d'état           | GPIO    | PC13            | intégrée à la carte
+  Bouton USER          | EXTI    | PB0 + pull-up   | bouton externe vers GND
+  Programmation        | SWD     | SWDIO/SWCLK     | sonde ST-LINK V2
+
+  Câblage : USART2 TX (nœud 1) -> USART1 RX (nœud 2), et USART2 RX
+  (nœud 1) <- USART1 TX (nœud 2) pour la remontée du ACK. MASSES COMMUNES.
+  Astuce : un seul adaptateur USB-série suffit pour le PC (son TX vers le RX
+  d'entrée du maître, son RX depuis le TX de sortie du dernier). Avec un
+  deuxième adaptateur, on peut lire les logs USART3.
+  Même firmware sur toutes les cartes : le rôle est déterminé à l'exécution.
+
+  Matériel à avoir : sonde ST-LINK V2, 1 ou 2 adaptateurs USB-série 3,3 V,
+  2 boutons, breadboard, fils dupont.
+  Clones (CKS32/CS32) : si CubeProgrammer refuse le chip, utiliser OpenOCD
+  avec "set CPUTAPID 0x2ba01477".
+
+-------------------------------------------------------------------------------
+6. ARCHITECTURE SW PROPOSÉE
+-------------------------------------------------------------------------------
+Bare-metal (HAL générée par CubeMX) : boucle principale + interruptions +
+machine à états. Pas de RTOS : besoin simple et événementiel, débogage plus
+facile, 20 Ko de RAM.
+
+  Module      | Rôle                                            | Testable PC
+  ------------+-------------------------------------------------+------------
+  bsp         | LED (motifs 0,5 Hz / fixe / 5 Hz), bouton       |
+              | (anti-rebond + 3 appuis en moins de 1 s)        |
+  uart_link   | RX par interruption -> buffer circulaire, une   |
+              | instance par ligne (entrée / sortie / debug)    |
+  frame       | parseur octet par octet (attente 0x7E, en-tête, | oui
+              | contrôle de length et du flag, timeout),        |
+              | sérialisation                                   |
+  crc16       | CRC-16/CCITT                                    | oui
+  crypto      | chiffrer/déchiffrer(payload, len, clé)          | oui
+  node_id     | ID 32 bits depuis l'UID, graine aléatoire       |
+  node_fsm    | INIT / RUNNING / ERROR, rôle, clé, configuration|
+  dispatcher  | décide selon le rôle et le flag : traiter,      |
+              | relayer, déchiffrer -> PC, ACK, ERROR           |
+  log         | logs horodatés sur USART3                       |
+
+Règles : pas de printf ni de traitement long en interruption, variables
+partagées en volatile, aucun blocage (tout part de la boucle principale avec
+des timeouts non bloquants basés sur HAL_GetTick), payload chiffré avant le
+calcul du CRC.
+
+-------------------------------------------------------------------------------
+7. PLAN D'ACTION
+-------------------------------------------------------------------------------
+PHASE 0 - Cadrage (semaine du 12/10)
+  [ ] Corriger notre spec (P1-P10) et décider pour S1-S4 avec Shawrov
+  [ ] Envoyer la v2 de la spec au prof + confirmer la date de rendu
+  [ ] Créer le dépôt git, y mettre protocol_icd.h, la spec et ce plan
+  [ ] Vérifier le matériel (ST-LINK, adaptateur USB-série, boutons)
+  [ ] Répartition proposée : Antonin = bsp/uart/frame/crc ;
+      Shawrov = fsm/dispatcher/crypto/script PC (à ajuster)
+
+PHASE 1 - Prise en main (semaine du 12/10)
+  [ ] CubeMX : STM32F103C8Tx, quartz HSE 8 MHz -> 72 MHz,
+      SYS > Debug = Serial Wire (sinon la carte devient difficile à
+      reflasher), USART1/2/3 à 115200 bauds 8N1 avec interruptions,
+      PC13 en sortie, PB0 en EXTI, Toolchain = CMake
+  [ ] Faire clignoter la LED, flasher et déboguer depuis VS Code -> commit
+  [ ] Logs USART3 visibles dans picocom -> commit
+
+PHASE 2 - Briques testées sur PC (semaine du 19/10)
+  [ ] crc16, frame, crypto en C portable + tests unitaires (gcc sur PC),
+      dont : payload contenant 0x7E, length = 17, mauvais CRC, trame
+      tronquée
+  [ ] bsp : motifs de clignotement + détection des 3 appuis
+
+PHASE 3 - Lien série entre 2 cartes (semaine du 26/10)
+  [ ] Script Python (pyserial) pour PC IN / PC OUT : construit les trames,
+      calcule le CRC, affiche ce qui revient (outil de test + preuve)
+  [ ] Envoi et réception de trames entre les 2 Blue Pill, relais
+
+PHASE 4 - Logique (semaines du 02/11 et du 09/11)
+  [ ] Machine à états + LED + ERROR pendant 1 s
+  [ ] Détermination du rôle, init maître (clé, CMD_INIT), init esclave,
+      ACK du dernier
+  [ ] CMD_MSG : chiffrement par le maître, déchiffrement par le dernier,
+      envoi en clair au PC
+  [ ] CMD_RESET : par le bouton et par trame, puis réinitialisation
+      automatique lancée par le maître
+  [ ] CMD_ERROR + codes d'erreur
+  [ ] (selon décision S1/S2) GET_INFO, GET_KEY, anti-interchangement
+
+PHASE 5 - Intégration (semaine du 16/11)
+  [ ] Chaîne complète PC -> maître -> esclave -> PC
+  [ ] Si possible, intégration avec les cartes d'un autre binôme pour
+      tester N > 2 nœuds (même ICD)
+  [ ] Tests de robustesse : débranchement, trame corrompue, reset en plein
+      échange, triple appui, permutation des cartes
+
+PHASE 6 - Preuves et rendu (avant le 22/11)
+  [ ] Vidéo : démarrage (0,5 Hz) -> init -> LED fixe -> message en clair
+      au PC OUT -> trame corrompue (5 Hz) -> triple appui -> réinitialisation
+  [ ] Logs USART3 des 2 cartes + capture du script Python. En option :
+      capture au analyseur logique avec PulseView montrant que le
+      payload est chiffré sur le fil
+  [ ] README : architecture HW/SW, câblage, ICD, spec v2, matrice
+      exigences -> tests -> preuves, comment compiler et flasher
+  [ ] Tag git "v1.0-rendu" + mail au prof (noms + lien git + lien drive)
+===============================================================================

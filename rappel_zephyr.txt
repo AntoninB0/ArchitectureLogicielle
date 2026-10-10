@@ -1,0 +1,153 @@
+===============================================================================
+ RAPPEL ZEPHYR - Blue Pill STM32F103C8 (Zephyr 4.4, NCS v3.4.1)
+===============================================================================
+
+-------------------------------------------------------------------------------
+1. ORGANISATION DU DOSSIER
+-------------------------------------------------------------------------------
+ArchitectureLogicielle/            <- racine (dépôt git)
+├── build.sh                       <- script de compilation et de flash
+├── protocol_icd.h                 <- l'ICD commun
+├── docs/                          <- PDF, plan, spec, rappels (à ranger ici)
+├── exercices/
+│   └── blinky/                    <- 1 dossier = 1 application Zephyr
+│       ├── CMakeLists.txt
+│       ├── prj.conf
+│       └── src/
+│           └── main.c
+└── noeud/                         <- LE projet (même firmware sur les 2 cartes)
+    ├── CMakeLists.txt
+    ├── prj.conf
+    ├── app.overlay                (optionnel : modifications du devicetree)
+    ├── include/                   (tes .h, dont protocol_icd.h)
+    └── src/
+        ├── main.c
+        └── ... (frame.c, crc16.c, crypto.c, fsm.c ...)
+
+-> Tu crées toi-même src/. Le dossier build/ est créé AUTOMATIQUEMENT
+   par build.sh (dans noeud/build/) : ne le crée pas, ne le modifie pas,
+   ne le mets pas dans git (.gitignore : build/).
+
+Commandes (depuis ArchitectureLogicielle/) :
+   ./build.sh exercices/blinky
+   ./build.sh exercices/blinky flash /dev/ttyUSB1     (BOOT0=1 + RESET avant)
+   ./build.sh exercices/blinky monitor /dev/ttyUSB1
+
+-------------------------------------------------------------------------------
+2. LES 4 FICHIERS D'UNE APPLICATION
+-------------------------------------------------------------------------------
+a) CMakeLists.txt : comment compiler (toujours le même squelette)
+       cmake_minimum_required(VERSION 3.20.0)
+       find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+       project(nom_appli)
+       target_sources(app PRIVATE src/main.c)       # + tes autres .c
+       target_include_directories(app PRIVATE include)
+
+b) prj.conf : quelles FONCTIONNALITÉS logicielles activer (Kconfig)
+   Une option par ligne, CONFIG_XXX=y. Exemples utiles :
+       CONFIG_GPIO=y                    pilote GPIO
+       CONFIG_SERIAL=y                  pilote UART
+       CONFIG_UART_INTERRUPT_DRIVEN=y   API UART à interruptions
+       CONFIG_PRINTK=y                  printk()
+       CONFIG_LOG=y                     LOG_INF/LOG_ERR... (coûte de la flash)
+       CONFIG_MAIN_STACK_SIZE=1024      taille de la pile du thread main
+       CONFIG_CRC=y                     fonctions crc16 de Zephyr (option)
+   Après une modification de prj.conf : ./build.sh <appli> clean
+
+c) Devicetree (.dts de la carte + ton app.overlay) : quel MATÉRIEL existe
+   et sur quelles broches. Ce qui est déjà défini pour la Blue Pill
+   (voir lecture_zephyr/) :
+       led0 (alias)  -> PC13, active à l'état bas
+       usart1        -> PA9/PA10, 115200 bauds, = CONSOLE (printk va au PC)
+       usart2        -> PA2/PA3, 115200 bauds, activé (lien entre cartes)
+       usart3        -> PB10/PB11
+   Pas de bouton défini : à ajouter dans app.overlay (PB0), sur le même
+   modèle que "leds" (compatible "gpio-keys", alias sw0).
+
+d) src/*.c : ton code.
+
+Règle à retenir : Kconfig (prj.conf) = LOGICIEL, devicetree = MATÉRIEL.
+
+-------------------------------------------------------------------------------
+3. DEVICETREE DEPUIS LE C
+-------------------------------------------------------------------------------
+   #include <zephyr/kernel.h>
+   #include <zephyr/drivers/gpio.h>
+   #include <zephyr/drivers/uart.h>
+
+   DT_ALIAS(led0)                         noeud désigné par un alias
+   DT_NODELABEL(usart2)                   noeud désigné par son label
+   DT_CHOSEN(zephyr_console)              noeud "chosen"
+   DEVICE_DT_GET(noeud)                   -> const struct device *
+   GPIO_DT_SPEC_GET(noeud, gpios)         -> struct gpio_dt_spec (port+pin+flags)
+   device_is_ready(dev) / gpio_is_ready_dt(&spec)   À TOUJOURS vérifier
+
+   Tout est résolu à la COMPILATION : si tu fais une faute de nom, tu as une
+   erreur de build (souvent obscure, avec "__device_dts_ord_xx").
+
+-------------------------------------------------------------------------------
+4. API À CONNAÎTRE (va lire la doc de chacune)
+-------------------------------------------------------------------------------
+GPIO
+   gpio_pin_configure_dt(&spec, GPIO_OUTPUT_INACTIVE / GPIO_INPUT)
+   gpio_pin_set_dt(&spec, 0/1)   (valeur LOGIQUE : ACTIVE_LOW est géré pour toi)
+   gpio_pin_toggle_dt(&spec)
+   gpio_pin_interrupt_configure_dt(&spec, GPIO_INT_EDGE_TO_ACTIVE)
+   gpio_init_callback() + gpio_add_callback()   -> fonction appelée sur appui
+
+UART (mode interruption, pour recevoir octet par octet)
+   uart_irq_callback_user_data_set(dev, callback, user_data)
+   uart_irq_rx_enable(dev)
+   dans le callback : uart_irq_update(dev); uart_irq_rx_ready(dev);
+                      uart_fifo_read(dev, buf, taille)
+   envoyer : uart_poll_out(dev, octet)   (simple, bloquant, suffisant ici)
+
+Temps
+   k_sleep(K_MSEC(500)) / k_msleep(500)   endort le thread (ne bloque pas les autres)
+   k_uptime_get()                          ms depuis le démarrage
+   K_TIMER_DEFINE(nom, expiry_fn, stop_fn) + k_timer_start(&nom, K_MSEC(x), K_MSEC(y))
+   struct k_work_delayable                 action différée hors interruption
+
+Threads et communication
+   K_THREAD_DEFINE(nom, taille_pile, fonction, p1, p2, p3, priorité, 0, 0)
+   K_MSGQ_DEFINE(q, sizeof(elem), nb_elem, 4)   file de messages
+       k_msgq_put(&q, &elem, K_NO_WAIT)   (depuis une ISR : TOUJOURS K_NO_WAIT)
+       k_msgq_get(&q, &elem, K_FOREVER)   (le thread dort jusqu'à réception)
+   K_SEM_DEFINE / k_sem_give / k_sem_take   signaler un événement
+   K_MUTEX_DEFINE / k_mutex_lock / unlock   protéger une donnée partagée
+   Priorité : plus le nombre est PETIT, plus le thread est prioritaire.
+
+Divers
+   printk("x=%d\n", x)        -> console USART1 = PC
+   hwinfo_get_device_id()     -> UID de la puce (CONFIG_HWINFO=y)
+   sys_rand32_get()           -> nombre aléatoire (CONFIG_ENTROPY_GENERATOR,
+                                 voir ce qui est disponible sur F103 !)
+
+-------------------------------------------------------------------------------
+5. RÈGLES D'OR
+-------------------------------------------------------------------------------
+- En interruption (callbacks UART/GPIO, timers) : court, pas de k_sleep,
+  pas de printk en rafale. On met l'octet ou l'événement dans une file ou un
+  sémaphore et un THREAD fait le travail.
+- 20 Ko de RAM : chaque thread a sa pile (512 à 1024 octets suffisent
+  souvent). Regarde le résumé "RAM: xxx B" à chaque build.
+- Toujours vérifier device_is_ready() avant d'utiliser un périphérique.
+- Le chiffrement et le CRC sont du C pur : écris-les dans des .c séparés,
+  sans include Zephyr, pour pouvoir les tester sur PC avec gcc.
+- Committer souvent (git), avec un message clair : c'est aussi une preuve
+  pour le rendu.
+
+-------------------------------------------------------------------------------
+6. PROGRESSION CONSEILLÉE
+-------------------------------------------------------------------------------
+ 1. exercices/blinky      LED PC13 qui clignote + printk("tick") toutes les s
+ 2. exercices/bouton      overlay avec PB0, interruption, compter 3 appuis < 1 s
+ 3. exercices/uart_echo   recevoir sur usart2 par interruption, renvoyer
+                          l'octet sur la console
+ 4. exercices/threads     un thread RX qui remplit une k_msgq, un thread qui
+                          la traite
+ 5. noeud/                le vrai projet, en réutilisant 1 à 4
+
+Doc : https://docs.zephyrproject.org/latest/ (rubriques "Kernel Services",
+"Devicetree", "Peripherals > GPIO / UART")
+===============================================================================
