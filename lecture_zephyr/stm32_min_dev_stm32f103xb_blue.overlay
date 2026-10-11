@@ -13,4 +13,10 @@
 			gpios = <&gpioc 13 GPIO_ACTIVE_LOW>;
 		};
 	};
+
+	buttons {
+		button: button {
+			gpios = <&gpiob 1 GPIO_ACTIVE_LOW>;
+		};
+	};
 };

@@ -1,46 +1,92 @@
 #!/usr/bin/env bash
 # Compile / flashe une application Zephyr pour la Blue Pill (STM32F103C8).
 #
-#   ./build.sh <appli>                  compile
-#   ./build.sh <appli> clean            recompile depuis zéro
-#   ./build.sh <appli> flash [port]     flashe par le bootloader série
-#                                       (BOOT0 = 1 puis RESET avant ; port par défaut /dev/ttyUSB0)
-#   ./build.sh <appli> monitor [port]   affiche ce que la carte envoie sur A9 (Ctrl-A Ctrl-X pour quitter)
+#   ./build.sh <appli>                compile
+#   ./build.sh <appli> clean          recompile depuis zéro
+#   ./build.sh <appli> flash [port]   flashe TOUTES les cartes branchées (ou seulement [port])
+#   ./build.sh monitor [log.txt]      affiche ce que toutes les cartes envoient (+ enregistre)
 #
-# <appli> = dossier contenant CMakeLists.txt, prj.conf, src/...
-set -euo pipefail
+# <appli> = dossier contenant prj.conf et src/*.c (+ include/*.h optionnel).
+# Le CMakeLists.txt est créé automatiquement : tous les .c de src/ sont compilés.
+#
+# Flash : avant, mettre BOOT0 = 1 et appuyer sur RESET sur chaque carte à flasher.
+#         Après : BOOT0 = 0 + RESET pour que le programme redémarre seul.
+set -uo pipefail
 
 NCS_VERSION=v3.4.1
 NCS_DIR="$HOME/ncs/$NCS_VERSION"
 BOARD=stm32_min_dev@blue
 EXTRA_MODULES="$HOME/zephyr-modules/hal_stm32"
+ROOT=$(dirname "$(realpath "$0")")
 
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 [ $# -ge 1 ] || usage
+if [ "$1" = monitor ]; then exec python3 "$ROOT/tools/monitor.py" "${@:2}"; fi
+
 APP=$(realpath "$1")
 ACTION=${2:-build}
-PORT=${3:-/dev/ttyUSB0}
 BUILD_DIR="$APP/build"
 BIN="$BUILD_DIR/zephyr/zephyr.bin"
 
-[ -f "$APP/CMakeLists.txt" ] || { echo "Erreur : pas de CMakeLists.txt dans $APP"; exit 1; }
+[ -d "$APP/src" ] || { echo "Erreur : pas de dossier src/ dans $APP"; exit 1; }
+
+# CMakeLists.txt généré : l'utilisateur n'a jamais à y toucher
+ensure_cmakelists() {
+    local f="$APP/CMakeLists.txt"
+    grep -q "tools/app.cmake" "$f" 2>/dev/null && return
+    [ -s "$f" ] && { echo "Note : $f remplacé par la version générée (ancien -> CMakeLists.txt.old)"; mv "$f" "$f.old"; }
+    cat > "$f" <<CM
+# Généré par build.sh - ne pas modifier (voir tools/app.cmake)
+cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS \$ENV{ZEPHYR_BASE})
+project($(basename "$APP"))
+include($(realpath --relative-to="$APP" "$ROOT")/tools/app.cmake)
+CM
+}
 
 build() {
-    local pristine=$1
-    cd "$NCS_DIR"
-    nrfutil sdk-manager toolchain launch --ncs-version "$NCS_VERSION" -- \
-        west build --no-sysbuild -p "$pristine" -b "$BOARD" -d "$BUILD_DIR" "$APP" \
-        -- -DEXTRA_ZEPHYR_MODULES="$EXTRA_MODULES"
+    ensure_cmakelists
+    touch "$APP/prj.conf"
+    (cd "$NCS_DIR" && nrfutil sdk-manager toolchain launch --ncs-version "$NCS_VERSION" -- \
+        west build --no-sysbuild -p "$1" -b "$BOARD" -d "$BUILD_DIR" "$APP" \
+        -- -DEXTRA_ZEPHYR_MODULES="$EXTRA_MODULES")
+}
+
+# Flashe une carte : jusqu'à 3 essais (les adaptateurs PL2303 ratent parfois la synchro)
+flash_one() {
+    local port=$1 out
+    for try in 1 2 3; do
+        out=$(timeout 90 STM32_Programmer_CLI -c port="$port" br=115200 \
+              -w "$BIN" 0x08000000 -s 0x08000000 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+        if grep -q "Start operation achieved" <<<"$out"; then
+            echo "  $port : OK, programme lancé"
+            return 0
+        fi
+        if grep -q "Activating device: KO" <<<"$out"; then
+            echo "  $port : la carte ne répond pas (BOOT0 = 1 ? RESET appuyé ?)"
+            return 1
+        fi
+        echo "  $port : essai $try raté, nouvel essai..."
+    done
+    echo "  $port : ÉCHEC après 3 essais. Appuie sur RESET (BOOT0 = 1) et relance."
+    grep -E "Error" <<<"$out" | head -3 | sed 's/^/      /'
+    return 1
 }
 
 case "$ACTION" in
-    build)   build auto ;;
-    clean)   build always ;;
+    build) build auto ;;
+    clean) build always ;;
     flash)
-        [ -f "$BIN" ] || build auto
-        STM32_Programmer_CLI -c port="$PORT" br=115200 -w "$BIN" 0x08000000 -v -s 0x08000000
+        build auto || exit 1
+        ports=("${@:3}")
+        [ ${#ports[@]} -gt 0 ] || ports=(/dev/ttyUSB*)
+        [ -e "${ports[0]}" ] || { echo "Aucun adaptateur USB-série branché"; exit 1; }
+        echo "Flash de $(basename "$APP") sur : ${ports[*]}"
+        rc=0
+        for p in "${ports[@]}"; do flash_one "$p" || rc=1; done
+        [ $rc = 0 ] && echo "Terminé. Pour garder le programme après un reset : BOOT0 = 0 puis RESET."
+        exit $rc
         ;;
-    monitor) picocom -b 115200 "$PORT" ;;
-    *)       usage ;;
+    *) usage ;;
 esac

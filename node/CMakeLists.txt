@@ -1,0 +1,5 @@
+# Généré par build.sh - ne pas modifier (voir tools/app.cmake)
+cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(node)
+include(../tools/app.cmake)
