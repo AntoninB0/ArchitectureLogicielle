@@ -1,21 +1,15 @@
-/*
- * Copyright (c) 2017, embedjournal.com
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
+/* Bouton USER externe : PB0 relié à G par un bouton poussoir.
+ * ACTIVE_LOW : appuyé = 0 V ; PULL_UP : résistance interne vers 3,3 V au repos. */
 / {
-	model = "STM32 Minimum Development Board (Blue)";
-	compatible = "stm32_min_dev_blue", "st,stm32f103c8";
-
 	buttons {
 		compatible = "gpio-keys";
 		button: button {
-			gpios = <&gpiob 0 GPIO_PULL_UP>;
+			gpios = <&gpiob 0 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 			label = "BT";
 		};
 	};
+
 	aliases {
-     		button0 = &button;               // alias -> label
+		button0 = &button;
 	};
 };
