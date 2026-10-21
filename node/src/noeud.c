@@ -121,6 +121,7 @@ static void init_maitre(noeud_t *n)
     n->position = 1;
     n->compteur_msg = 0;
     n->configure = false;
+    journal(n, "Bonjour, carte : maitre\n");
     journal(n, "Init maitre : %u noeuds, cle 0x%08x\n", n->nb_noeuds, (unsigned)n->cle);
 
     if (n->nb_noeuds == 1) {
@@ -286,6 +287,7 @@ static void recevoir_init(noeud_t *n, ligne_t l, const ProtocolMessage_t *m)
     n->position = position;
     n->dernier = (position == nb);
     n->configure = true;
+    journal(n, "Bonjour, carte : esclave\n");
     journal(n, "Init esclave : position %u/%u%s, amont %s, cle 0x%08x\n", position, nb,
             n->dernier ? " (dernier)" : "", NOMS_LIGNES[l], (unsigned)n->cle);
     passer_etat(n, ETAT_RUNNING);
@@ -473,8 +475,8 @@ void noeud_tick(noeud_t *n, uint32_t now_ms)
 void noeud_appui_simple(noeud_t *n, uint32_t now_ms)
 {
     n->now = now_ms;
-    journal(n, "Info : id 0x%08x, %s, etat %s, position %u/%u, cle 0x%08x\n",
-            (unsigned)n->id, NOMS_ROLES[n->role], NOMS_ETATS[noeud_etat(n)],
+    journal(n, "Appui simple : carte : %s, id 0x%08x, etat %s, position %u/%u, cle 0x%08x\n",
+            NOMS_ROLES[n->role], (unsigned)n->id, NOMS_ETATS[noeud_etat(n)],
             n->position, n->nb_noeuds, (unsigned)n->cle);
 }
 

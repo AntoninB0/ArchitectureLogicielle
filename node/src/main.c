@@ -235,11 +235,9 @@ int main(void)
                     noeud_octet(&noeud, (ligne_t)evt.ligne, evt.octet, now);
                     break;
                 case APPUI:
-                    printk("Simple appui detecte\n");
                     noeud_appui_simple(&noeud, now);
                     break;
                 case TRIPLE_APPUI:
-                    printk("Triple appui detecte\n");
                     noeud_triple_appui(&noeud, now);
                     break;
             }
