@@ -16,6 +16,7 @@ set -uo pipefail
 NCS_VERSION=v3.4.1
 NCS_DIR="$HOME/ncs/$NCS_VERSION"
 BOARD=stm32_min_dev@blue
+BAUD=${BAUD:-57600}   # vitesse du bootloader UART (115200 trop fragile sur breadboard)
 EXTRA_MODULES="$HOME/zephyr-modules/hal_stm32"
 ROOT=$(dirname "$(realpath "$0")")
 
@@ -57,7 +58,7 @@ build() {
 flash_one() {
     local port=$1 out
     for try in 1 2 3; do
-        out=$(timeout 90 STM32_Programmer_CLI -c port="$port" br=115200 \
+        out=$(timeout 90 STM32_Programmer_CLI -c port="$port" br="$BAUD" \
               -w "$BIN" 0x08000000 -s 0x08000000 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
         if grep -q "Start operation achieved" <<<"$out"; then
             echo "  $port : OK, programme lancé"
@@ -65,9 +66,11 @@ flash_one() {
         fi
         if grep -q "Activating device: KO" <<<"$out"; then
             echo "  $port : la carte ne répond pas (BOOT0 = 1 ? RESET appuyé ?)"
+            grep -E "Error|error" <<<"$out" | head -2 | sed 's/^/      /'
             return 1
         fi
         echo "  $port : essai $try raté, nouvel essai..."
+        grep -E "Error|error" <<<"$out" | head -2 | sed 's/^/      /'
     done
     echo "  $port : ÉCHEC après 3 essais. Appuie sur RESET (BOOT0 = 1) et relance."
     grep -E "Error" <<<"$out" | head -3 | sed 's/^/      /'
