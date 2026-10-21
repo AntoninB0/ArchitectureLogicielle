@@ -14,11 +14,15 @@
 #include <stdint.h>
 #include "frame.h"
 
+/* Lignes physiques. Les deux lignes de chaîne sont interchangeables : un
+ * esclave prend pour amont celle où arrive CMD_INIT, l'autre est l'aval ; le
+ * maître prend pour aval celle où revient le ACK. Le câblage entre cartes
+ * est donc libre (USART2 ou USART3 de chaque côté). */
 typedef enum {
     LIGNE_PC,      /* USART1 : PC (logs, PC IN pour le maître, PC OUT pour le dernier) */
-    LIGNE_AMONT,   /* USART3 : nœud précédent */
-    LIGNE_AVAL,    /* USART2 : nœud suivant */
-    NB_LIGNES
+    LIGNE_A,       /* USART2 */
+    LIGNE_B,       /* USART3 */
+    NB_LIGNES      /* aussi : ligne inconnue */
 } ligne_t;
 
 typedef enum { ETAT_INIT, ETAT_RUNNING, ETAT_ERROR } etat_t;
@@ -55,6 +59,8 @@ typedef struct {
     uint8_t  nb_noeuds;
     uint8_t  position;        /* 0 = non initialisé, le maître = 1 */
     bool     dernier;
+    ligne_t  amont;           /* esclave : ligne du nœud précédent */
+    ligne_t  aval;            /* ligne du nœud suivant (NB_LIGNES : inconnue) */
     uint8_t  compteur_msg;    /* nonce des CMD_MSG émis par le maître */
     /* échéances du maître */
     bool     attente_ack;

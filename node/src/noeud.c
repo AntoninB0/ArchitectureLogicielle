@@ -4,7 +4,13 @@
 
 static const char *const NOMS_ETATS[] = { "INIT", "RUNNING", "ERROR" };
 static const char *const NOMS_ROLES[] = { "inconnu", "maitre", "esclave" };
-static const char *const NOMS_LIGNES[] = { "PC", "amont", "aval" };
+static const char *const NOMS_LIGNES[] = { "PC", "USART2", "USART3", "?" };
+
+/* L'autre ligne de chaîne */
+static ligne_t autre(ligne_t l)
+{
+    return (l == LIGNE_A) ? LIGNE_B : LIGNE_A;
+}
 
 /* "now" est-il après "echeance" ? (correct même quand le compteur déborde) */
 static bool atteint(uint32_t now, uint32_t echeance)
@@ -100,6 +106,8 @@ static void effacer_configuration(noeud_t *n)
     n->cle = 0;
     n->position = 0;
     n->dernier = false;
+    n->amont = NB_LIGNES;
+    n->aval = NB_LIGNES;
     n->compteur_msg = 0;
     n->attente_ack = false;
     n->relance = false;
@@ -126,15 +134,20 @@ static void init_maitre(noeud_t *n)
 
     uint8_t p[6] = { (uint8_t)n->cle, (uint8_t)(n->cle >> 8), (uint8_t)(n->cle >> 16),
                      (uint8_t)(n->cle >> 24), n->nb_noeuds, n->position };
-    envoyer(n, LIGNE_AVAL, CMD_INIT, 0, p, sizeof(p));
+    /* aval encore inconnu : CMD_INIT part sur les deux lignes de chaîne,
+     * une seule est câblée vers le nœud suivant */
+    n->aval = NB_LIGNES;
+    envoyer(n, LIGNE_A, CMD_INIT, 0, p, sizeof(p));
+    envoyer(n, LIGNE_B, CMD_INIT, 0, p, sizeof(p));
     n->attente_ack = true;
     n->echeance_ack_ms = n->now + NOEUD_TIMEOUT_ACK_MS;
     passer_etat(n, ETAT_INIT);
 }
 
 /* Réinitialisation : efface clé et configuration, retour en INIT.
- * origine = ligne d'où vient le CMD_RESET, ou NB_LIGNES s'il est local
- * (triple appui, commande du PC) : il part alors dans les deux sens. */
+ * origine = ligne d'où vient le CMD_RESET, qui continue alors sur l'autre
+ * ligne ; ou NB_LIGNES s'il est local (triple appui, commande du PC) : il
+ * part alors dans les deux sens. */
 static void reinitialiser(noeud_t *n, ligne_t origine, const ProtocolMessage_t *m)
 {
     journal(n, "Reinitialisation (%s)\n",
@@ -142,13 +155,11 @@ static void reinitialiser(noeud_t *n, ligne_t origine, const ProtocolMessage_t *
     effacer_configuration(n);
     n->erreur = false;
 
-    if (origine == LIGNE_AMONT) {
-        envoyer_trame(n, LIGNE_AVAL, m);
-    } else if (origine == LIGNE_AVAL) {
-        envoyer_trame(n, LIGNE_AMONT, m);
+    if (origine == LIGNE_A || origine == LIGNE_B) {
+        envoyer_trame(n, autre(origine), m);
     } else {
-        envoyer(n, LIGNE_AMONT, CMD_RESET, 0, NULL, 0);
-        envoyer(n, LIGNE_AVAL, CMD_RESET, 0, NULL, 0);
+        envoyer(n, LIGNE_A, CMD_RESET, 0, NULL, 0);
+        envoyer(n, LIGNE_B, CMD_RESET, 0, NULL, 0);
     }
 
     if (n->role == ROLE_MAITRE) {
@@ -226,7 +237,7 @@ static void depuis_pc(noeud_t *n, const ProtocolMessage_t *m)
         memcpy(chiffre, m->payload, len);
         n->compteur_msg++;
         crypto_appliquer(chiffre, len, n->cle, n->compteur_msg);
-        envoyer(n, LIGNE_AVAL, CMD_MSG, n->compteur_msg, chiffre, len);
+        envoyer(n, n->aval, CMD_MSG, n->compteur_msg, chiffre, len);
         break;
     }
 
@@ -249,63 +260,63 @@ static void depuis_pc(noeud_t *n, const ProtocolMessage_t *m)
     }
 }
 
+/* CMD_INIT reçu sur une ligne de chaîne : cette ligne devient l'amont */
+static void recevoir_init(noeud_t *n, ligne_t l, const ProtocolMessage_t *m)
+{
+    if (m->header.length != 6) {
+        signaler_erreur(n, l, ERR_LONGUEUR);
+        return;
+    }
+    if (n->role == ROLE_MAITRE) {
+        signaler_erreur(n, l, ERR_ROLE);
+        return;
+    }
+    uint8_t nb = m->payload[4];
+    uint8_t position = m->payload[5] + 1;
+    if (nb < 2 || m->payload[5] == 0 || position > nb) {
+        signaler_erreur(n, l, ERR_CONFIG);
+        return;
+    }
+    n->role = ROLE_ESCLAVE;
+    n->amont = l;
+    n->aval = autre(l);
+    n->cle = (uint32_t)m->payload[0] | ((uint32_t)m->payload[1] << 8) |
+             ((uint32_t)m->payload[2] << 16) | ((uint32_t)m->payload[3] << 24);
+    n->nb_noeuds = nb;
+    n->position = position;
+    n->dernier = (position == nb);
+    n->configure = true;
+    journal(n, "Init esclave : position %u/%u%s, amont %s, cle 0x%08x\n", position, nb,
+            n->dernier ? " (dernier)" : "", NOMS_LIGNES[l], (unsigned)n->cle);
+    passer_etat(n, ETAT_RUNNING);
+
+    if (n->dernier) {
+        envoyer(n, n->amont, CMD_ACK, 0, NULL, 0);
+    } else {
+        /* seule exception au relais sans modification : la position
+         * avance d'un cran, le CRC est donc recalculé */
+        ProtocolMessage_t suite;
+        uint8_t p[6];
+        memcpy(p, m->payload, sizeof(p));
+        p[5] = position;
+        frame_preparer(&suite, CMD_INIT, m->header.id_src, m->header.reserve, p, sizeof(p));
+        envoyer_trame(n, n->aval, &suite);
+    }
+}
+
+/* Trame venant du nœud précédent (esclave uniquement) */
 static void depuis_amont(noeud_t *n, const ProtocolMessage_t *m)
 {
     const uint8_t len = m->header.length;
 
     switch (m->header.command_type) {
-    case CMD_INIT: {
-        if (len != 6) {
-            signaler_erreur(n, LIGNE_AMONT, ERR_LONGUEUR);
-            return;
-        }
-        if (n->role == ROLE_MAITRE) {
-            signaler_erreur(n, LIGNE_AMONT, ERR_ROLE);
-            return;
-        }
-        uint8_t nb = m->payload[4];
-        uint8_t position = m->payload[5] + 1;
-        if (nb < 2 || m->payload[5] == 0 || position > nb) {
-            signaler_erreur(n, LIGNE_AMONT, ERR_CONFIG);
-            return;
-        }
-        n->role = ROLE_ESCLAVE;
-        n->cle = (uint32_t)m->payload[0] | ((uint32_t)m->payload[1] << 8) |
-                 ((uint32_t)m->payload[2] << 16) | ((uint32_t)m->payload[3] << 24);
-        n->nb_noeuds = nb;
-        n->position = position;
-        n->dernier = (position == nb);
-        n->configure = true;
-        journal(n, "Init esclave : position %u/%u%s, cle 0x%08x\n", position, nb,
-                n->dernier ? " (dernier)" : "", (unsigned)n->cle);
-        passer_etat(n, ETAT_RUNNING);
-
-        if (n->dernier) {
-            envoyer(n, LIGNE_AMONT, CMD_ACK, 0, NULL, 0);
-        } else {
-            /* seule exception au relais sans modification : la position
-             * avance d'un cran, le CRC est donc recalculé */
-            ProtocolMessage_t suite;
-            uint8_t p[6];
-            memcpy(p, m->payload, sizeof(p));
-            p[5] = position;
-            frame_preparer(&suite, CMD_INIT, m->header.id_src, m->header.reserve, p, sizeof(p));
-            envoyer_trame(n, LIGNE_AVAL, &suite);
-        }
-        break;
-    }
-
-    case CMD_RESET:
-        reinitialiser(n, LIGNE_AMONT, m);
-        break;
-
     case CMD_MSG:
         if (len == 0) {
-            signaler_erreur(n, LIGNE_AMONT, ERR_LONGUEUR);
+            signaler_erreur(n, n->amont, ERR_LONGUEUR);
             return;
         }
         if (!n->configure || noeud_etat(n) != ETAT_RUNNING) {
-            signaler_erreur(n, LIGNE_AMONT, ERR_ETAT);
+            signaler_erreur(n, n->amont, ERR_ETAT);
             return;
         }
         if (n->dernier) {
@@ -314,7 +325,7 @@ static void depuis_amont(noeud_t *n, const ProtocolMessage_t *m)
             crypto_appliquer(clair, len, n->cle, m->header.reserve);
             livrer_au_pc(n, clair, len);
         } else {
-            envoyer_trame(n, LIGNE_AVAL, m);
+            envoyer_trame(n, n->aval, m);
         }
         break;
 
@@ -328,35 +339,56 @@ static void depuis_amont(noeud_t *n, const ProtocolMessage_t *m)
     }
 }
 
-static void depuis_aval(noeud_t *n, const ProtocolMessage_t *m)
+/* Trame venant du nœud suivant, ou d'une ligne dont le sens est inconnu */
+static void depuis_aval(noeud_t *n, ligne_t l, const ProtocolMessage_t *m)
 {
     switch (m->header.command_type) {
     case CMD_ACK:
         if (n->role == ROLE_ESCLAVE) {
-            envoyer_trame(n, LIGNE_AMONT, m);   /* remonte vers le maître */
+            envoyer_trame(n, n->amont, m);   /* remonte vers le maître */
         } else if (n->role == ROLE_MAITRE && n->attente_ack) {
             n->attente_ack = false;
             n->configure = true;
-            journal(n, "ACK du dernier : chaine configuree\n");
+            n->aval = l;
+            journal(n, "ACK du dernier sur %s : chaine configuree\n", NOMS_LIGNES[l]);
             passer_etat(n, ETAT_RUNNING);
             envoyer(n, LIGNE_PC, CMD_ACK, 0, NULL, 0);
         }
-        break;
-
-    case CMD_RESET:
-        reinitialiser(n, LIGNE_AVAL, m);
         break;
 
     case CMD_ERROR:
         journal(n, "Erreur %u signalee par le noeud aval\n",
                 m->header.length ? m->payload[0] : 0);
         /* remonte jusqu'au maître, qui la transmet au PC */
-        envoyer_trame(n, n->role == ROLE_MAITRE ? LIGNE_PC : LIGNE_AMONT, m);
+        if (n->role == ROLE_MAITRE) {
+            envoyer_trame(n, LIGNE_PC, m);
+        } else if (n->role == ROLE_ESCLAVE) {
+            envoyer_trame(n, n->amont, m);
+        }
         break;
 
+    case CMD_MSG:
+        if (n->role == ROLE_INCONNU) {
+            signaler_erreur(n, l, ERR_ETAT);   /* pas encore initialisé */
+            break;
+        }
+        /* fall through */
     default:
         journal(n, "Commande %u de l'aval ignoree\n", m->header.command_type);
         break;
+    }
+}
+
+static void depuis_chaine(noeud_t *n, ligne_t l, const ProtocolMessage_t *m)
+{
+    if (m->header.command_type == CMD_INIT) {
+        recevoir_init(n, l, m);
+    } else if (m->header.command_type == CMD_RESET) {
+        reinitialiser(n, l, m);
+    } else if (n->role == ROLE_ESCLAVE && l == n->amont) {
+        depuis_amont(n, m);
+    } else {
+        depuis_aval(n, l, m);
     }
 }
 
@@ -370,6 +402,8 @@ void noeud_demarrer(noeud_t *n, uint32_t id, const noeud_ops_t *ops, uint32_t no
     n->now = now_ms;
     n->role = ROLE_INCONNU;
     n->etat = ETAT_INIT;
+    n->amont = NB_LIGNES;
+    n->aval = NB_LIGNES;
     n->led = LED_INIT;
     ops->led(ops->ctx, LED_INIT);
     journal(n, "Noeud 0x%08x demarre, etat INIT\n", (unsigned)id);
@@ -395,10 +429,8 @@ void noeud_octet(noeud_t *n, ligne_t ligne, uint8_t octet, uint32_t now_ms)
     case FRAME_OK:
         if (ligne == LIGNE_PC) {
             depuis_pc(n, &m);
-        } else if (ligne == LIGNE_AMONT) {
-            depuis_amont(n, &m);
         } else {
-            depuis_aval(n, &m);
+            depuis_chaine(n, ligne, &m);
         }
         break;
     case FRAME_ERR_LONGUEUR:

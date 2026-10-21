@@ -24,11 +24,12 @@ typedef struct {
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(button0), gpios);
 
-/* USART1 = PC (console), USART3 = amont, USART2 = aval */
+/* USART1 = PC (console) ; USART2 et USART3 = lignes de chaîne, le sens
+ * amont/aval est découvert à l'initialisation */
 static const struct device *const uarts[NB_LIGNES] = {
-    [LIGNE_PC]    = DEVICE_DT_GET(DT_NODELABEL(usart1)),
-    [LIGNE_AMONT] = DEVICE_DT_GET(DT_NODELABEL(usart3)),
-    [LIGNE_AVAL]  = DEVICE_DT_GET(DT_NODELABEL(usart2)),
+    [LIGNE_PC] = DEVICE_DT_GET(DT_NODELABEL(usart1)),
+    [LIGNE_A]  = DEVICE_DT_GET(DT_NODELABEL(usart2)),
+    [LIGNE_B]  = DEVICE_DT_GET(DT_NODELABEL(usart3)),
 };
 
 /* Assez grande pour plusieurs trames de 26 octets sur les 3 lignes */
@@ -161,15 +162,20 @@ static const noeud_ops_t ops = {
     .vlog = hw_vlog,
 };
 
-/* ID 32 bits : position X/Y sur le wafer (32 bits) et numéro de wafer.
- * hwinfo rend l'UID 96 bits en big-endian : [7] = wafer, [8..11] = X/Y. */
+/* ID 32 bits dérivé de l'UID 96 bits (lot, wafer, position X/Y).
+ * Les 96 bits sont mélangés (FNV-1a) : sur les clones (CKS32) l'UID n'est
+ * pas rangé comme sur un vrai STM32, les octets X/Y seuls peuvent valoir 0. */
 static uint32_t lire_id(void)
 {
     uint8_t uid[12] = { 0 };
     hwinfo_get_device_id(uid, sizeof(uid));
-    uint32_t xy = ((uint32_t)uid[8] << 24) | ((uint32_t)uid[9] << 16) |
-                  ((uint32_t)uid[10] << 8) | uid[11];
-    uint32_t id = xy ^ ((uint32_t)uid[7] << 24);
+    printk("UID :");
+    uint32_t id = 2166136261u;
+    for (int i = 0; i < 12; i++) {
+        printk(" %02x", uid[i]);
+        id = (id ^ uid[i]) * 16777619u;
+    }
+    printk("\n");
     return (id == DEFAULT_ID) ? 1 : id;   /* DEFAULT_ID est réservé au PC */
 }
 
@@ -213,8 +219,9 @@ int main(void)
         uart_irq_rx_enable(uarts[l]);
     }
 
-    entropie = lire_id();
-    noeud_demarrer(&noeud, lire_id(), &ops, k_uptime_get_32());
+    uint32_t id = lire_id();
+    entropie = id;
+    noeud_demarrer(&noeud, id, &ops, k_uptime_get_32());
     printk("Pret : appui simple = infos, triple appui = reset\n");
 
     event_t evt;

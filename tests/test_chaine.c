@@ -29,6 +29,11 @@ static noeud_ops_t ops[N];
 static ecoute_t pc[N];         /* ce que chaque nœud envoie à son PC */
 static ecoute_t espion_0_1;    /* ce qui passe sur le fil nœud 0 -> nœud 1 */
 static bool lien_coupe;        /* fil 0 <-> 1 débranché */
+
+/* Câblage : le lien k relie la ligne cote_gauche du nœud k à la ligne
+ * cote_droit du nœud k+1. Par défaut USART2 -> USART3 ; les tests changent
+ * ce tableau pour vérifier que le câblage est libre. */
+static struct { ligne_t cote_gauche, cote_droit; } liens[N - 1];
 static uint32_t now;
 static bool verbose;
 
@@ -70,15 +75,15 @@ static void sim_envoyer(void *c, ligne_t ligne, const uint8_t *data, size_t len)
     int i = ((sim_ctx_t *)c)->idx;
     if (ligne == LIGNE_PC) {
         ecouter(&pc[i], data, len);
-    } else if (ligne == LIGNE_AVAL && i + 1 < N) {
+    } else if (i + 1 < N && ligne == liens[i].cote_gauche) {
         if (i == 0) {
             if (lien_coupe) return;
             ecouter(&espion_0_1, data, len);
         }
-        transmettre(i + 1, LIGNE_AMONT, data, len);
-    } else if (ligne == LIGNE_AMONT && i > 0) {
+        transmettre(i + 1, liens[i].cote_droit, data, len);
+    } else if (i > 0 && ligne == liens[i - 1].cote_droit) {
         if (i == 1 && lien_coupe) return;
-        transmettre(i - 1, LIGNE_AVAL, data, len);
+        transmettre(i - 1, liens[i - 1].cote_gauche, data, len);
     }
 }
 
@@ -157,6 +162,10 @@ static void demarrer(void)
 {
     tete = queue = 0;
     lien_coupe = false;
+    for (int k = 0; k < N - 1; k++) {
+        liens[k].cote_gauche = LIGNE_A;
+        liens[k].cote_droit = LIGNE_B;
+    }
     memset(&espion_0_1, 0, sizeof(espion_0_1));
     for (int i = 0; i < N; i++) {
         memset(&pc[i], 0, sizeof(pc[i]));
@@ -244,6 +253,28 @@ static void test_message(void)
     VERIFIER(memcmp(derniere(&pc[2])->payload, texte, len) == 0);
 }
 
+static void test_cablage_libre(void)
+{
+    printf("Cablage libre : USART2 <-> USART2 puis USART3 <-> USART2\n");
+    demarrer();
+    liens[0].cote_gauche = LIGNE_A;   /* nœud 0 USART2 <-> nœud 1 USART2 */
+    liens[0].cote_droit = LIGNE_A;
+    liens[1].cote_gauche = LIGNE_B;   /* nœud 1 USART3 <-> nœud 2 USART2 */
+    liens[1].cote_droit = LIGNE_A;
+    initialiser_chaine();
+    VERIFIER(tous(ETAT_RUNNING));
+    VERIFIER(noeuds[1].amont == LIGNE_A && noeuds[1].aval == LIGNE_B);
+    VERIFIER(noeuds[2].amont == LIGNE_A && noeuds[2].dernier);
+    VERIFIER(noeuds[0].aval == LIGNE_A);
+    pc_envoyer(0, CMD_MSG, "cablage libre", 13);
+    VERIFIER(derniere(&pc[2]) && memcmp(derniere(&pc[2])->payload, "cablage libre", 13) == 0);
+    noeud_triple_appui(&noeuds[1], now);
+    pomper();
+    VERIFIER(tous(ETAT_INIT));
+    avancer(NOEUD_DELAI_RELANCE_MS + 20);
+    VERIFIER(tous(ETAT_RUNNING));
+}
+
 static void test_message_hors_running(void)
 {
     printf("Aucun message hors RUNNING\n");
@@ -270,7 +301,7 @@ static void test_trames_invalides(void)
     frame_preparer(&m, CMD_MSG, noeuds[0].id, 1, (const uint8_t *)"xyz", 3);
     size_t n = frame_serialiser(&m, buf);
     buf[9] ^= 0x10;
-    transmettre(1, LIGNE_AMONT, buf, n);
+    transmettre(1, LIGNE_B, buf, n);
     pomper();
     VERIFIER(noeud_etat(&noeuds[1]) == ETAT_ERROR && ctx[1].led == LED_ERROR);
     VERIFIER(pc[2].nb == 0);                              /* pas relayée */
@@ -373,6 +404,7 @@ int main(void)
     test_initialisation();
     test_synchronisation_visible();
     test_message();
+    test_cablage_libre();
     test_message_hors_running();
     test_trames_invalides();
     test_un_seul_maitre();

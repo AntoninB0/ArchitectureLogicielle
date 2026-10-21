@@ -24,18 +24,20 @@ Toutes les cartes ont le même firmware : chacune trouve son rôle à l'exécuti
 | Fonction | Périph. | Broches | Branché sur |
 |---|---|---|---|
 | Ligne PC (logs, PC IN pour le maître, PC OUT pour le dernier, flash) | USART1 | PA9 TX / PA10 RX | adaptateur USB-série |
-| Ligne amont (entrée) | USART3 | PB10 TX / PB11 RX | nœud précédent |
-| Ligne aval (sortie) | USART2 | PA2 TX / PA3 RX | nœud suivant |
+| Ligne de chaîne A | USART2 | PA2 TX / PA3 RX | nœud précédent ou suivant |
+| Ligne de chaîne B | USART3 | PB10 TX / PB11 RX | nœud précédent ou suivant |
 | LED d'état | GPIO | PC13 | LED de la carte |
 | Bouton USER | EXTI | PB0, pull-up | bouton vers GND |
 
-Câblage entre le nœud *k* et le nœud *k+1*, à 115200 bauds 8N1 :
+**Le câblage entre cartes est libre** : on relie une ligne de chaîne (USART2 ou USART3) d'un nœud à une ligne de chaîne du suivant, en croisant TX et RX, à 115200 bauds 8N1. Le sens est découvert à l'initialisation. Le maître envoie `CMD_INIT` sur ses deux lignes. Un esclave prend pour amont la ligne où `CMD_INIT` arrive et relaie sur l'autre. Le maître prend pour aval la ligne où revient le ACK. Exemple utilisé pour la démo :
 
 ```
-nœud k  PA2 (TX2) ───────► PB11 (RX3)  nœud k+1     CMD_INIT, CMD_MSG, CMD_RESET
-nœud k  PA3 (RX2) ◄─────── PB10 (TX3)  nœud k+1     CMD_ACK, CMD_ERROR, CMD_RESET
-        GND ────────────── GND                      masses communes
+nœud 1  PA2 (TX2) ───────► PA3 (RX2)  nœud 2     CMD_INIT, CMD_MSG, CMD_RESET
+nœud 1  PA3 (RX2) ◄─────── PA2 (TX2)  nœud 2     CMD_ACK, CMD_ERROR, CMD_RESET
+        GND ────────────── GND                   masses communes
 ```
+
+Avec N > 2, un nœud intermédiaire utilise ses deux lignes, une vers chaque voisin.
 
 Sur l'USART1, les logs texte et les trames du PC partagent la ligne : les logs ne contiennent jamais `0x7E` (`~`), et `tools/chaine.py` sépare les deux.
 La RX des USART2/3 est en pull-up (`app.overlay`), pour qu'une ligne non câblée, comme l'amont du maître ou l'aval du dernier, ne capte pas de bruit.
@@ -94,6 +96,7 @@ Cela donne les trois indications du sujet : non initialisé (0,5 Hz), en synchro
 
 ### Limites connues
 
+* Un nœud intermédiaire ne doit pas avoir ses deux lignes reliées au même voisin.
 * **Interchangement des modules (S2)** : rien ne détecte l'échange de deux modules déjà initialisés. Une permutation est détectée seulement si elle fausse la position (`ERR_CONFIG`) ou si elle place un esclave en entrée (`ERR_ROLE`). Pour aller plus loin, il faudrait une clé par lien, qui lie chaque nœud à son voisin.
 * **La clé circule en clair dans `CMD_INIT` (S4)**. Il n'existe pas de secret partagé avant l'initialisation.
 * Le chiffrement est un exercice : flot XOR simple, sans authentification cryptographique. Le CRC protège l'intégrité contre les erreurs de transmission, pas contre un attaquant.
@@ -129,6 +132,7 @@ python3 tools/chaine.py --in /dev/ttyUSB0 --log logs/demo.txt
 | Réception octet par octet, 0x7E, length > 16, flag inconnu, timeout | `test_briques` : Parseur ; `test_chaine` : Trames invalides |
 | CRC16 émis et vérifié | `test_briques` : CRC16, Parseur |
 | Relais sans modification, pas de relais d'une trame invalide | `test_chaine` : Message, Trames invalides |
+| Câblage libre (sens découvert à l'init) | `test_chaine` : Câblage libre |
 | Chiffré entre les nœuds, en clair au PC IN et au PC OUT | `test_chaine` : Message (espion sur le fil 0 → 1) |
 | Triple appui, CMD_RESET, relance par le maître | `test_chaine` : Reset |
 | LED 0,5 Hz / fixe / 5 Hz | `test_chaine` (motif demandé) + vidéo |
