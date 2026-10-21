@@ -1,38 +1,60 @@
+/* Partie Zephyr du nœud : LED, bouton, 3 UART, identifiant, aléa.
+ * Les interruptions ne font que poster des événements dans une file ;
+ * le thread main les traite un par un avec la logique de noeud.c. */
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/hwinfo.h>
 #include "protocol_icd.h"
+#include "noeud.h"
 
 typedef enum {
+    EVT_OCTET = 0,
     APPUI = 1,
-    TRIPLE_APPUI = 2,
-    FIN_ERREUR = 3
-} event_t;
+    TRIPLE_APPUI = 2
+} type_evt_t;
 
-typedef enum {
-    ETAT_INIT,
-    ETAT_RUNNING,
-    ETAT_ERROR
-} etat_t;
+typedef struct {
+    uint8_t type;    /* type_evt_t */
+    uint8_t ligne;   /* ligne_t, pour EVT_OCTET */
+    uint8_t octet;
+    uint8_t inutilise;
+} event_t;
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(button0), gpios);
 
-K_MSGQ_DEFINE(file, sizeof(event_t), 4, 4);
+/* USART1 = PC (console), USART3 = amont, USART2 = aval */
+static const struct device *const uarts[NB_LIGNES] = {
+    [LIGNE_PC]    = DEVICE_DT_GET(DT_NODELABEL(usart1)),
+    [LIGNE_AMONT] = DEVICE_DT_GET(DT_NODELABEL(usart3)),
+    [LIGNE_AVAL]  = DEVICE_DT_GET(DT_NODELABEL(usart2)),
+};
+
+/* Assez grande pour plusieurs trames de 26 octets sur les 3 lignes */
+K_MSGQ_DEFINE(file, sizeof(event_t), 256, 4);
 static struct gpio_callback button_cb_data;
+static atomic_t octets_perdus;
 #define DEBOUNCE_MS 75
 #define FENETRE_CLICS_MS 1000
+#define PERIODE_TICK_MS 10
 
 /* Nombre de clics dans la fenêtre en cours. Partagé entre l'ISR du bouton
  * et l'expiration du timer (deux contextes d'interruption) -> atomique. */
 static atomic_t nb_clics;
+
+static void poster(type_evt_t type)
+{
+    event_t evt = { .type = type };
+    k_msgq_put(&file, &evt, K_NO_WAIT);
+}
 
 /* Fin de la fenêtre de 1 s sans 3e clic : on décide "appui simple". */
 void fin_fenetre_clics(struct k_timer *timer_id)
 {
     atomic_val_t n = atomic_clear(&nb_clics);
     if (n > 0 && n < 3) {
-        event_t evt = APPUI;
-        k_msgq_put(&file, &evt, K_NO_WAIT);
+        poster(APPUI);
     }
 }
 K_TIMER_DEFINE(clics_timer, fin_fenetre_clics, NULL);
@@ -56,50 +78,105 @@ void btn_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pi
         /* 3e clic avant la fin : triple appui, on annule la fenêtre */
         k_timer_stop(&clics_timer);
         atomic_clear(&nb_clics);
-        event_t evt = TRIPLE_APPUI;
-        k_msgq_put(&file, &evt, K_NO_WAIT);
+        poster(TRIPLE_APPUI);
     }
 }
 
+/* Réception UART : chaque octet part dans la file, avec sa ligne */
+static void uart_rx_isr(const struct device *dev, void *user_data)
+{
+    event_t evt = { .type = EVT_OCTET, .ligne = (uint8_t)(uintptr_t)user_data };
+
+    if (!uart_irq_update(dev)) {
+        return;
+    }
+    while (uart_irq_rx_ready(dev) && uart_fifo_read(dev, &evt.octet, 1) == 1) {
+        if (k_msgq_put(&file, &evt, K_NO_WAIT) != 0) {
+            atomic_inc(&octets_perdus);
+        }
+    }
+}
 
 void led_blink(struct k_timer *timer_id)
-{ 
+{
     gpio_pin_toggle_dt(&led);
 }
 K_TIMER_DEFINE(led_timer, led_blink, NULL);
 
-void fin_erreur(struct k_timer *timer_id)
-{
-    event_t evt = FIN_ERREUR;
-    k_msgq_put(&file, &evt, K_NO_WAIT);
-}
-K_TIMER_DEFINE(erreur_timer, fin_erreur, NULL);
+/* ------------------------------------------- services fournis à noeud.c */
 
-/* LED : INIT = 0,5 Hz, RUNNING = fixe, ERROR = 5 Hz */
-static void appliquer_etat(etat_t etat)
+static void hw_envoyer(void *ctx, ligne_t ligne, const uint8_t *data, size_t len)
 {
-    switch (etat) {
-        case ETAT_INIT:
-            printk("Etat INIT\n");
+    for (size_t i = 0; i < len; i++) {
+        uart_poll_out(uarts[ligne], data[i]);
+    }
+}
+
+/* LED : INIT = 0,5 Hz, SYNCHRO = 2 Hz, RUNNING = fixe, ERROR = 5 Hz */
+static void hw_led(void *ctx, led_mode_t mode)
+{
+    switch (mode) {
+        case LED_INIT:
             k_timer_start(&led_timer, K_MSEC(1000), K_MSEC(1000));
             break;
-        case ETAT_RUNNING:
-            printk("Etat RUNNING\n");
+        case LED_SYNCHRO:
+            k_timer_start(&led_timer, K_MSEC(250), K_MSEC(250));
+            break;
+        case LED_RUNNING:
             k_timer_stop(&led_timer);
             gpio_pin_set_dt(&led, 1);
             break;
-        case ETAT_ERROR:
-            printk("Etat ERROR\n");
+        case LED_ERROR:
             k_timer_start(&led_timer, K_MSEC(100), K_MSEC(100));
-            k_timer_start(&erreur_timer, K_MSEC(1000), K_NO_WAIT);
             break;
     }
 }
 
+/* Le F103 n'a pas de générateur matériel : l'aléa vient de l'heure exacte
+ * (en cycles CPU à 72 MHz) de chaque événement, imprévisible à l'échelle
+ * d'un octet UART ou d'un appui humain. */
+static uint32_t entropie;
+
+static void melanger_entropie(void)
+{
+    entropie = (entropie ^ k_cycle_get_32()) * 1664525u + 1013904223u;
+}
+
+static uint32_t hw_aleatoire(void *ctx)
+{
+    melanger_entropie();
+    return entropie;
+}
+
+static void hw_vlog(void *ctx, const char *fmt, va_list ap)
+{
+    printk("[%6u] ", k_uptime_get_32());
+    vprintk(fmt, ap);
+}
+
+static const noeud_ops_t ops = {
+    .envoyer = hw_envoyer,
+    .led = hw_led,
+    .aleatoire = hw_aleatoire,
+    .vlog = hw_vlog,
+};
+
+/* ID 32 bits : position X/Y sur le wafer (32 bits) et numéro de wafer.
+ * hwinfo rend l'UID 96 bits en big-endian : [7] = wafer, [8..11] = X/Y. */
+static uint32_t lire_id(void)
+{
+    uint8_t uid[12] = { 0 };
+    hwinfo_get_device_id(uid, sizeof(uid));
+    uint32_t xy = ((uint32_t)uid[8] << 24) | ((uint32_t)uid[9] << 16) |
+                  ((uint32_t)uid[10] << 8) | uid[11];
+    uint32_t id = xy ^ ((uint32_t)uid[7] << 24);
+    return (id == DEFAULT_ID) ? 1 : id;   /* DEFAULT_ID est réservé au PC */
+}
+
+static noeud_t noeud;
+
 int main(void)
-{   
-    etat_t etat = ETAT_INIT;
-    etat_t etat_avant_erreur = ETAT_INIT;
+{
     int ret;
 
     if (!gpio_is_ready_dt(&led) || !gpio_is_ready_dt(&button)) {
@@ -127,46 +204,44 @@ int main(void)
     gpio_init_callback(&button_cb_data, btn_pressed, BIT(button.pin));
     gpio_add_callback(button.port, &button_cb_data);
 
-    printk("Pret : appui simple = etat suivant, triple appui = reset\n");
-    appliquer_etat(etat);
+    for (int l = 0; l < NB_LIGNES; l++) {
+        if (!device_is_ready(uarts[l])) {
+            printk("Erreur : UART de la ligne %d non prete\n", l);
+            return 0;
+        }
+        uart_irq_callback_user_data_set(uarts[l], uart_rx_isr, (void *)(uintptr_t)l);
+        uart_irq_rx_enable(uarts[l]);
+    }
+
+    entropie = lire_id();
+    noeud_demarrer(&noeud, lire_id(), &ops, k_uptime_get_32());
+    printk("Pret : appui simple = infos, triple appui = reset\n");
 
     event_t evt;
     while (1) {
-        k_msgq_get(&file, &evt, K_FOREVER);
-        if (evt == APPUI) {
-            printk("Simple appui detecte\n");
-        } else if (evt == TRIPLE_APPUI) {
-            printk("Triple appui detecte\n");
+        /* réveil au moins toutes les 10 ms pour les timeouts */
+        if (k_msgq_get(&file, &evt, K_MSEC(PERIODE_TICK_MS)) == 0) {
+            uint32_t now = k_uptime_get_32();
+            melanger_entropie();
+            switch (evt.type) {
+                case EVT_OCTET:
+                    noeud_octet(&noeud, (ligne_t)evt.ligne, evt.octet, now);
+                    break;
+                case APPUI:
+                    printk("Simple appui detecte\n");
+                    noeud_appui_simple(&noeud, now);
+                    break;
+                case TRIPLE_APPUI:
+                    printk("Triple appui detecte\n");
+                    noeud_triple_appui(&noeud, now);
+                    break;
+            }
         }
+        noeud_tick(&noeud, k_uptime_get_32());
 
-        if (evt == TRIPLE_APPUI) {
-            printk("Reinitialisation du noeud\n");
-            k_timer_stop(&erreur_timer);
-            etat = ETAT_INIT;
-            appliquer_etat(etat);
-            continue;
-        }
-
-        switch (etat) {
-            case ETAT_INIT:
-                if (evt == APPUI) {
-                    etat = ETAT_RUNNING;
-                    appliquer_etat(etat);
-                }
-                break;
-            case ETAT_RUNNING:
-                if (evt == APPUI) {
-                    etat_avant_erreur = etat;
-                    etat = ETAT_ERROR;
-                    appliquer_etat(etat);
-                }
-                break;
-            case ETAT_ERROR:
-                if (evt == FIN_ERREUR) {
-                    etat = etat_avant_erreur;
-                    appliquer_etat(etat);
-                }
-                break;
+        atomic_val_t perdus = atomic_clear(&octets_perdus);
+        if (perdus) {
+            printk("Attention : %d octets perdus (file pleine)\n", (int)perdus);
         }
     }
     return 0;

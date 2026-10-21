@@ -13,3 +13,13 @@
 		button0 = &button;
 	};
 };
+
+/* Lignes entre cartes : pull-up sur RX, pour qu'une ligne non câblée
+ * (amont du maître, aval du dernier) reste au repos au lieu de capter du bruit. */
+&usart2_rx_pa3 {
+	bias-pull-up;
+};
+
+&usart3_rx_pb11 {
+	bias-pull-up;
+};

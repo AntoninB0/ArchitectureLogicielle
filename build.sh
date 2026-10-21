@@ -4,7 +4,8 @@
 #   ./build.sh <appli>                compile
 #   ./build.sh <appli> clean          recompile depuis zéro
 #   ./build.sh <appli> flash [port]   flashe TOUTES les cartes branchées (ou seulement [port])
-#   ./build.sh monitor [log.txt]      affiche ce que toutes les cartes envoient (+ enregistre)
+#   ./build.sh monitor [log.txt]      affiche ce que toutes les cartes envoient (+ enregistre),
+#                                     et envoie des commandes (voir tools/chaine.py)
 #
 # <appli> = dossier contenant prj.conf et src/*.c (+ include/*.h optionnel).
 # Le CMakeLists.txt est créé automatiquement : tous les .c de src/ sont compilés.
@@ -20,10 +21,10 @@ BAUD=${BAUD:-57600}   # vitesse du bootloader UART (115200 trop fragile sur brea
 EXTRA_MODULES="$HOME/zephyr-modules/hal_stm32"
 ROOT=$(dirname "$(realpath "$0")")
 
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 [ $# -ge 1 ] || usage
-if [ "$1" = monitor ]; then exec python3 "$ROOT/tools/monitor.py" "${@:2}"; fi
+if [ "$1" = monitor ]; then exec python3 "$ROOT/tools/chaine.py" ${2:+--log "$2"}; fi
 
 APP=$(realpath "$1")
 ACTION=${2:-build}
