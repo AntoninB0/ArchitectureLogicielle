@@ -353,10 +353,14 @@ static void test_reset(void)
     VERIFIER(tous(ETAT_INIT));
     VERIFIER(noeuds[1].cle == 0 && noeuds[2].cle == 0 && noeuds[0].cle == 0);
     VERIFIER(noeuds[0].role == ROLE_MAITRE && noeuds[2].role == ROLE_INCONNU);
+    VERIFIER(ctx[0].led == LED_RESET && ctx[2].led == LED_RESET);   /* reset visible */
 
     avancer(NOEUD_DELAI_RELANCE_MS + 20);
     VERIFIER(tous(ETAT_RUNNING));
     VERIFIER(noeuds[2].cle == noeuds[0].cle && noeuds[0].cle != ancienne_cle);
+    VERIFIER(ctx[0].led == LED_RESET);        /* signal encore affiché après la relance */
+    avancer(NOEUD_DUREE_SIGNAL_RESET_MS);
+    VERIFIER(ctx[0].led == LED_RUNNING && ctx[2].led == LED_RUNNING);
 
     printf("Reset par commande du PC\n");
     vider(&pc[0]);

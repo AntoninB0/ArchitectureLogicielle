@@ -113,7 +113,8 @@ static void hw_envoyer(void *ctx, ligne_t ligne, const uint8_t *data, size_t len
     }
 }
 
-/* LED : INIT = 0,5 Hz, SYNCHRO = 2 Hz, RUNNING = fixe, ERROR = 5 Hz */
+/* LED : INIT = 0,5 Hz, SYNCHRO = 2 Hz, RUNNING = fixe, ERROR = 5 Hz,
+ * RESET = 3 flashs (éteinte, puis 6 bascules de 150 ms) */
 static void hw_led(void *ctx, led_mode_t mode)
 {
     switch (mode) {
@@ -129,6 +130,10 @@ static void hw_led(void *ctx, led_mode_t mode)
             break;
         case LED_ERROR:
             k_timer_start(&led_timer, K_MSEC(100), K_MSEC(100));
+            break;
+        case LED_RESET:
+            gpio_pin_set_dt(&led, 0);
+            k_timer_start(&led_timer, K_MSEC(150), K_MSEC(150));
             break;
     }
 }

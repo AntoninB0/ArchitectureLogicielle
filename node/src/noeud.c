@@ -44,7 +44,9 @@ etat_t noeud_etat(const noeud_t *n)
 static void maj_led(noeud_t *n)
 {
     led_mode_t mode;
-    if (n->erreur) {
+    if (n->signal_reset) {
+        mode = LED_RESET;
+    } else if (n->erreur) {
         mode = LED_ERROR;
     } else if (n->etat == ETAT_RUNNING) {
         mode = LED_RUNNING;
@@ -155,6 +157,8 @@ static void reinitialiser(noeud_t *n, ligne_t origine, const ProtocolMessage_t *
             origine == NB_LIGNES ? "locale" : NOMS_LIGNES[origine]);
     effacer_configuration(n);
     n->erreur = false;
+    n->signal_reset = true;
+    n->fin_signal_reset_ms = n->now + NOEUD_DUREE_SIGNAL_RESET_MS;
 
     if (origine == LIGNE_A || origine == LIGNE_B) {
         envoyer_trame(n, autre(origine), m);
@@ -177,7 +181,7 @@ static void livrer_au_pc(noeud_t *n, const uint8_t *texte, uint8_t len)
 {
     char affiche[MAX_PAYLOAD_SIZE + 1];
     texte_affichable(texte, len, affiche);
-    journal(n, "PC OUT : \"%s\"\n", affiche);
+    journal(n, "Envoi au PC (PC OUT) : \"%s\"\n", affiche);
     envoyer(n, LIGNE_PC, CMD_MSG, 0, texte, len);
 }
 
@@ -228,7 +232,7 @@ static void depuis_pc(noeud_t *n, const ProtocolMessage_t *m)
         }
         char affiche[MAX_PAYLOAD_SIZE + 1];
         texte_affichable(m->payload, len, affiche);
-        journal(n, "PC IN : \"%s\"\n", affiche);
+        journal(n, "Message recu du PC (PC IN) : \"%s\"\n", affiche);
         envoyer(n, LIGNE_PC, CMD_ACK, 0, NULL, 0);
         if (n->dernier) {
             livrer_au_pc(n, m->payload, len);
@@ -239,6 +243,8 @@ static void depuis_pc(noeud_t *n, const ProtocolMessage_t *m)
         n->compteur_msg++;
         crypto_appliquer(chiffre, len, n->cle, n->compteur_msg);
         envoyer(n, n->aval, CMD_MSG, n->compteur_msg, chiffre, len);
+        journal(n, "Envoi du message chiffre n%u (%u octets) sur %s\n",
+                n->compteur_msg, len, NOMS_LIGNES[n->aval]);
         break;
     }
 
@@ -321,6 +327,8 @@ static void depuis_amont(noeud_t *n, const ProtocolMessage_t *m)
             signaler_erreur(n, n->amont, ERR_ETAT);
             return;
         }
+        journal(n, "Message chiffre n%u (%u octets) recu sur %s\n",
+                m->header.reserve, len, NOMS_LIGNES[n->amont]);
         if (n->dernier) {
             uint8_t clair[MAX_PAYLOAD_SIZE];
             memcpy(clair, m->payload, len);
@@ -328,6 +336,8 @@ static void depuis_amont(noeud_t *n, const ProtocolMessage_t *m)
             livrer_au_pc(n, clair, len);
         } else {
             envoyer_trame(n, n->aval, m);
+            journal(n, "Relais du message n%u sur %s\n", m->header.reserve,
+                    NOMS_LIGNES[n->aval]);
         }
         break;
 
@@ -456,6 +466,10 @@ void noeud_tick(noeud_t *n, uint32_t now_ms)
 
     for (int l = 0; l < NB_LIGNES; l++) {
         verifier_timeout(n, (ligne_t)l);
+    }
+    if (n->signal_reset && atteint(now_ms, n->fin_signal_reset_ms)) {
+        n->signal_reset = false;
+        maj_led(n);
     }
     if (n->erreur && atteint(now_ms, n->fin_erreur_ms)) {
         n->erreur = false;

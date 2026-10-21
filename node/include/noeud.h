@@ -29,12 +29,15 @@ typedef enum { ETAT_INIT, ETAT_RUNNING, ETAT_ERROR } etat_t;
 typedef enum { ROLE_INCONNU, ROLE_MAITRE, ROLE_ESCLAVE } role_t;
 
 /* Motifs de la LED : INIT = 0,5 Hz, SYNCHRO = 2 Hz (maître en attente du
- * ACK), RUNNING = fixe, ERROR = 5 Hz */
-typedef enum { LED_INIT, LED_SYNCHRO, LED_RUNNING, LED_ERROR } led_mode_t;
+ * ACK), RUNNING = fixe, ERROR = 5 Hz, RESET = 3 flashs rapides (prioritaire
+ * pendant NOEUD_DUREE_SIGNAL_RESET_MS, sinon la relance automatique du
+ * maître le rendrait invisible) */
+typedef enum { LED_INIT, LED_SYNCHRO, LED_RUNNING, LED_ERROR, LED_RESET } led_mode_t;
 
 #define NOEUD_DUREE_ERREUR_MS  1000
 #define NOEUD_TIMEOUT_ACK_MS   1000
 #define NOEUD_DELAI_RELANCE_MS 500
+#define NOEUD_DUREE_SIGNAL_RESET_MS 900
 #define NOEUD_NB_DEFAUT        2
 
 typedef struct {
@@ -67,6 +70,8 @@ typedef struct {
     uint32_t echeance_ack_ms;
     bool     relance;
     uint32_t echeance_relance_ms;
+    bool     signal_reset;    /* LED_RESET en cours */
+    uint32_t fin_signal_reset_ms;
     led_mode_t led;
     frame_parser_t parseurs[NB_LIGNES];
 } noeud_t;
