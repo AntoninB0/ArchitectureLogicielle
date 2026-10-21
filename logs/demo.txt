@@ -1,0 +1,111 @@
+00:14:38 [ttyUSB0] [ 97599] Appui simple : carte : inconnu, id 0x67ee65bf, etat INIT, position 0/0, cle 0x00000000
+00:14:50 [ttyUSB0] [109103] Appui simple : carte : inconnu, id 0x67ee65bf, etat INIT, position 0/0, cle 0x00000000
+00:14:53 [ttyUSB0] [112849] Appui simple : carte : inconnu, id 0x67ee65bf, etat INIT, position 0/0, cle 0x00000000
+00:14:57 [ttyUSB0] [116195] Appui simple : carte : inconnu, id 0x67ee65bf, etat INIT, position 0/0, cle 0x00000000
+00:14:59 [ttyUSB1] [111096] Reinitialisation (USART2)
+00:14:59 [ttyUSB0] [117977] Triple appui
+00:14:59 [ttyUSB0] [117979] Reinitialisation (locale)
+00:15:00 [ttyUSB0] [119057] Appui simple : carte : inconnu, id 0x67ee65bf, etat INIT, position 0/0, cle 0x00000000
+00:15:04 [ttyUSB0] [123462] Triple appui
+00:15:04 [ttyUSB0] [123464] Reinitialisation (locale)
+00:15:04 [ttyUSB1] [116581] Reinitialisation (USART2)
+00:15:07 [ttyUSB0] [126329] Appui simple : carte : inconnu, id 0x67ee65bf, etat INIT, position 0/0, cle 0x00000000
+00:15:30 [ttyUSB0] -> INIT b'\x02'
+00:15:30 [ttyUSB0] [149498] Bonjour, carte : maitre
+00:15:30 [ttyUSB0] [149501] Init maitre : 2 noeuds, cle 0x53599723
+00:15:30 [ttyUSB1] [142620] Bonjour, carte : esclave
+00:15:30 [ttyUSB1] [142623] Init esclave : position 2/2 (dernier), amont USART2, cle 0x53599723
+00:15:30 [ttyUSB1] [142630] Etat RUNNING
+00:15:30 [ttyUSB0] [149519] ACK du dernier sur USART2 : chaine configuree
+00:15:30 [ttyUSB0] [149524] Etat RUNNING
+00:15:30 [ttyUSB0] <- ACK de 0x67ee65bf 
+00:15:31 [ttyUSB0] -> MSG b'Bonjour'
+00:15:32 [ttyUSB0] [151001] Message recu du PC (PC IN) : "Bonjour"
+00:15:32 [ttyUSB0] <- ACK de 0x67ee65bf 
+00:15:32 [ttyUSB0] [151007] Envoi du message chiffre n1 (7 octets) sur USART2
+00:15:32 [ttyUSB1] [144121] Message chiffre n1 (7 octets) recu sur USART2
+00:15:32 [ttyUSB1] [144126] Envoi au PC (PC OUT) : "Bonjour"
+00:15:32 [ttyUSB1] <- MSG (PC OUT) : "Bonjour"
+00:23:20 [ttyUSB0] -> MSG b'Message long de '
+00:23:20 [ttyUSB0] -> MSG b'plus de seize oc'
+00:23:20 [ttyUSB1] [612904] Message chiffre n2 (16 octets) recu sur USART2
+00:23:20 [ttyUSB1] [612908] Envoi au PC (PC OUT) : "Message long de "
+00:23:20 [ttyUSB1] <- MSG (PC OUT) : "Message long de "
+00:23:20 [ttyUSB0] [619776] Message recu du PC (PC IN) : "Message long de "
+00:23:20 [ttyUSB0] <- ACK de 0x67ee65bf 
+00:23:20 [ttyUSB0] [619784] Envoi du message chiffre n2 (16 octets) sur USART2
+00:23:20 [ttyUSB0] -> MSG b'tets pour la dec'
+00:23:20 [ttyUSB1] [612954] Message chiffre n3 (16 octets) recu sur USART2
+00:23:20 [ttyUSB1] [612958] Envoi au PC (PC OUT) : "plus de seize oc"
+00:23:20 [ttyUSB1] <- MSG (PC OUT) : "plus de seize oc"
+00:23:20 [ttyUSB0] [619826] Message recu du PC (PC IN) : "plus de seize oc"
+00:23:20 [ttyUSB0] <- ACK de 0x67ee65bf 
+00:23:20 [ttyUSB0] [619834] Envoi du message chiffre n3 (16 octets) sur USART2
+00:23:20 [ttyUSB0] -> MSG b'oupe'
+00:23:20 [ttyUSB1] [613004] Message chiffre n4 (16 octets) recu sur USART2
+00:23:20 [ttyUSB1] [613009] Envoi au PC (PC OUT) : "tets pour la dec"
+00:23:20 [ttyUSB1] <- MSG (PC OUT) : "tets pour la dec"
+00:23:20 [ttyUSB0] [619876] Message recu du PC (PC IN) : "tets pour la dec"
+00:23:20 [ttyUSB0] <- ACK de 0x67ee65bf 
+00:23:20 [ttyUSB0] [619884] Envoi du message chiffre n4 (16 octets) sur USART2
+00:23:21 [ttyUSB1] [613051] Message chiffre n5 (4 octets) recu sur USART2
+00:23:21 [ttyUSB1] [613055] Envoi au PC (PC OUT) : "oupe"
+00:23:21 [ttyUSB1] <- MSG (PC OUT) : "oupe"
+00:23:21 [ttyUSB0] [619925] Message recu du PC (PC IN) : "oupe"
+00:23:21 [ttyUSB0] <- ACK de 0x67ee65bf 
+00:23:21 [ttyUSB0] [619931] Envoi du message chiffre n5 (4 octets) sur USART2
+00:23:22 [ttyUSB0] -> GET_INFO b''
+00:23:22 [ttyUSB0] <- INFO id=0xbf position=1 statut=maitre
+00:23:24 [ttyUSB1] -> GET_INFO b''
+00:23:24 [ttyUSB1] <- INFO id=0xeb position=2 statut=esclave
+00:23:26 [ttyUSB0] -> GET_KEY b''
+00:23:26 [ttyUSB0] <- KEY cle=0x53599723
+00:23:28 [ttyUSB1] -> GET_KEY b''
+00:23:28 [ttyUSB1] <- KEY cle=0x53599723
+00:23:30 [ttyUSB0] -> MSG b'corrompu' (CRC faux)
+00:23:30 [ttyUSB0] [629787] Erreur 1 sur la ligne PC
+00:23:30 [ttyUSB0] <- ERROR 1 (CRC faux) signalee par 0x67ee65bf
+00:23:30 [ttyUSB0] [629791] Etat ERROR
+00:23:31 [ttyUSB0] [630793] Fin ERROR, retour en RUNNING
+00:23:32 [ttyUSB0] -> MSG b'Apres erreur'
+00:23:32 [ttyUSB1] [624917] Message chiffre n6 (12 octets) recu sur USART2
+00:23:32 [ttyUSB0] [631790] Message recu du PC (PC IN) : "Apres erreur"
+00:23:32 [ttyUSB0] <- ACK de 0x67ee65bf 
+00:23:32 [ttyUSB0] [631797] Envoi du message chiffre n6 (12 octets) sur USART2
+00:23:32 [ttyUSB1] [624922] Envoi au PC (PC OUT) : "Apres erreur"
+00:23:32 [ttyUSB1] <- MSG (PC OUT) : "Apres erreur"
+00:23:34 [ttyUSB0] -> RESET b''
+00:23:34 [ttyUSB1] [626915] Reinitialisation (USART2)
+00:23:34 [ttyUSB1] [626919] Etat INIT
+00:23:34 [ttyUSB0] [633791] Reinitialisation (locale)
+00:23:34 [ttyUSB0] [633796] Etat INIT
+00:23:34 [ttyUSB0] <- ACK de 0x67ee65bf 
+00:23:35 [ttyUSB1] [627422] Bonjour, carte : esclave
+00:23:35 [ttyUSB0] [634293] Bonjour, carte : maitre
+00:23:35 [ttyUSB0] [634296] Init maitre : 2 noeuds, cle 0x7bd7e76e
+00:23:35 [ttyUSB1] [627425] Init esclave : position 2/2 (dernier), amont USART2, cle 0x7bd7e76e
+00:23:35 [ttyUSB1] [627431] Etat RUNNING
+00:23:35 [ttyUSB0] [634314] ACK du dernier sur USART2 : chaine configuree
+00:23:35 [ttyUSB0] [634319] Etat RUNNING
+00:23:35 [ttyUSB0] <- ACK de 0x67ee65bf 
+00:23:36 [ttyUSB0] -> MSG b'Juste apres rese'
+00:23:36 [ttyUSB1] [628923] Message chiffre n1 (16 octets) recu sur USART2
+00:23:36 [ttyUSB0] [635795] Message recu du PC (PC IN) : "Juste apres rese"
+00:23:36 [ttyUSB0] <- ACK de 0x67ee65bf 
+00:23:36 [ttyUSB0] [635803] Envoi du message chiffre n1 (16 octets) sur USART2
+00:23:36 [ttyUSB0] -> MSG b't'
+00:23:36 [ttyUSB1] [628928] Envoi au PC (PC OUT) : "Juste apres rese"
+00:23:36 [ttyUSB1] <- MSG (PC OUT) : "Juste apres rese"
+00:23:36 [ttyUSB1] [628969] Message chiffre n2 (1 octets) recu sur USART2
+00:23:36 [ttyUSB1] [628974] Envoi au PC (PC OUT) : "t"
+00:23:36 [ttyUSB1] <- MSG (PC OUT) : "t"
+00:23:36 [ttyUSB0] [635844] Message recu du PC (PC IN) : "t"
+00:23:36 [ttyUSB0] <- ACK de 0x67ee65bf 
+00:23:36 [ttyUSB0] [635849] Envoi du message chiffre n2 (1 octets) sur USART2
+00:23:40 [ttyUSB0] -> MSG b'Apres relance'
+00:23:40 [ttyUSB1] [632927] Message chiffre n3 (13 octets) recu sur USART2
+00:23:40 [ttyUSB1] [632932] Envoi au PC (PC OUT) : "Apres relance"
+00:23:40 [ttyUSB1] <- MSG (PC OUT) : "Apres relance"
+00:23:40 [ttyUSB0] [639799] Message recu du PC (PC IN) : "Apres relance"
+00:23:40 [ttyUSB0] <- ACK de 0x67ee65bf 
+00:23:40 [ttyUSB0] [639807] Envoi du message chiffre n3 (13 octets) sur USART2
