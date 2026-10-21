@@ -1,2 +1,4 @@
 build/
 *.pdf
+tests/build/
+__pycache__/
