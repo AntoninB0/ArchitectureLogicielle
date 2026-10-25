@@ -1,6 +1,12 @@
 # Chaîne d'information sécurisée : CY-Tech
 
-Binôme : Antonin Bo et Shawrov. Matériel : 2 × STM32F103C8T6 (« Blue Pill »), Zephyr (NCS v3.4.1).
+Antonin Bo Matériel : 2 × STM32F103C8T6 (« Blue Pill »), Zephyr (NCS v3.4.1).
+Le binôme original était avec Shawrov, cependant les différences entre les cartes F411 et F104 ont fait que chacun a fait sa version du code en fonction de la carte qu'il avait.
+J'ai donc deux Blue Pill communiquant ensemble sur un montage breadboard propre.
+Le projet a été réalisé avec l'aide de Claude en mode professeur. Les parties générées par lui sont le CMakeLists ainsi que les outils Python de build sur Blue Pill et les outils d'envoi de données. Le code fonctionnel a bien été écrit à la main.
+Nous avons commencé par lire le sujet et la spec, ce qui a donné le plan d'action, l'ICD (`protocol_icd.h`) et le script de build. Ensuite, un petit rappel de Zephyr a été fait sur la Blue Pill avec de petits exercices : LED clignotante, lecture du bouton, puis gestion du bouton par interruption, en même temps que le câblage propre des cartes. Une fois les tests Zephyr terminés, un câblage sur breadboard a été fait pour permettre l'appui bouton ainsi que la communication entre les deux cartes. Le firmware a été construit par briques : d'abord la machine à états INIT / RUNNING / ERROR et la détection du triple appui ; puis le CRC16, le format des trames et le chiffrement, chacun testé sur PC avant de passer sur la carte ; enfin la logique complète du nœud (rôles maître et esclave, initialisation, relais, reset, erreurs). Viennent ensuite l'ajout de logs lisibles pour suivre les échanges, et la démonstration sur les deux cartes. À chaque étape, Claude répondait aux questions plus précises sur les manières de faire et vérifiait l'intégrité du code, puis le test était fait sur les cartes.
+
+
 
 Des messages passent de proche en proche : `PC IN → nœud 1 (maître) → nœud 2 → … → nœud N → PC OUT`.
 Ils sont en clair à l'entrée et à la sortie, chiffrés entre les nœuds et protégés par un CRC16.
@@ -43,6 +49,25 @@ Sur l'USART1, les logs texte et les trames du PC partagent la ligne : les logs n
 La RX des USART2/3 est en pull-up (`app.overlay`), pour qu'une ligne non câblée, comme l'amont du maître ou l'aval du dernier, ne capte pas de bruit.
 
 > Ce choix diffère du plan initial (entrée = USART1). Sur Zephyr, la console est sur l'USART1, et c'est aussi par là qu'on flashe. Chaque carte a donc son adaptateur sur l'USART1 : celui du maître sert de PC IN, celui du dernier de PC OUT.
+
+### Photos du montage
+
+Les deux cartes sont superposées sur une seule breadboard, câblée en fils rigides, avec le bouton USER en haut.
+
+| Montage éclaté | Montage assemblé |
+|---|---|
+| ![Les deux Blue Pill et la breadboard câblée avec le bouton](docs/montage_eclate.jpg) | ![Les deux cartes montées sur la breadboard](docs/montage_assemble.jpg) |
+
+| Sous tension, vue de dessus | Sous tension, vue de profil |
+|---|---|
+| ![Les deux cartes sous tension, LED PC13 allumées](docs/montage_sous_tension_dessus.jpg) | ![Vue de profil, adaptateur USB-série branché](docs/montage_sous_tension_profil_1.jpg) |
+
+![Autre vue de profil sous tension](docs/montage_sous_tension_profil_2.jpg)
+
+### Vidéo de démonstration
+
+[`docs/demo.mp4`](docs/demo.mp4) (2 min 14) : démarrage en INIT, initialisation de la chaîne, envoi d'un message, lecture de la clé et des infos, trame corrompue (état ERROR), reset par triple appui.
+Le journal de la session est dans [`logs/demo_video.txt`](logs/demo_video.txt).
 
 ## Architecture logicielle
 
